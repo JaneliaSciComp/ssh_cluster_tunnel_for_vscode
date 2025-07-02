@@ -1,0 +1,26 @@
+[project]
+authors = ["Mark Kittisopikul <kittisopikulm@janelia.hhmi.org>"]
+channels = ["conda-forge"]
+description = "SSH cluster tunnel configuration for VS Code"
+name = "ssh_cluster_tunnel_for_vscode"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[tasks]
+ssh = { cmd = "ssh -o 'ProxyCommand python -m cluster_tunnel' hpcx" }
+tunnel = { cmd = "python -m cluster_tunnel" }
+test_actual = { cmd = "pytest" }
+test = { depends-on = [{ task = "test_actual", environment = "test"}] }
+
+[dependencies]
+python = ">=3.13.5,<3.14"
+
+[feature.test.dependencies]
+pytest = "*"
+
+[feature.ssh.dependencies]
+openssh = "*"
+
+[environments]
+test = ["test"]
+ssh = ["ssh"]

@@ -48,9 +48,18 @@ It is recommend to use a SSH key. Github has [detailed instructions](https://doc
 
 # Installation
 
+1. Clone the repository in order to download the script.
 ```
 git clone https://github.com/JaneliaSciComp/ssh_cluster_tunnel_for_vscode/
 ```
+
+2. Configure `~/.ssh/config` as detailed above.
+
+3.(Optional) Ensure that SSH keys are added to the `authorized_keys` file, typically `~/.ssh/authorized_keys`
+
+# Usage and testing
+
+Executing `ssh hpcx` should be sufficient to test if the command can establish a connection to the compute node. VSCode parses the SSH config file and should present an option to connect to `hpcx`.
 
 # Microsoft Windows
 

@@ -1,0 +1,7 @@
+# Typically part of ~/.ssh/config
+
+Host hpc
+    Hostname login1.int.janelia.org
+
+Host hpcx
+    ProxyCommand python /Users/kittisopikulm/tunnel/tunnel.py proxy

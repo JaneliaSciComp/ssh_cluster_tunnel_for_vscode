@@ -59,6 +59,16 @@ git clone https://github.com/JaneliaSciComp/ssh_cluster_tunnel_for_vscode/ -d tu
 
 4. Ensure that `python` is installed. We recommend installing `python` from conda-forge via `pixi`.
 
+# Command line usage
+
+The script can be invoked with no argument or a single argument. The default action when no argument is provided depends on the host.
+
+* `python tunnel.py start_job` - Copy the script to `~/tunnel.py` on the login node. Queue the job.
+* `python tunnel.py queue_job` - Queue the job from the login node. Default action on the login node.
+* `python tunnel.py run_job` - Get a free TCP port. Change the job description to the port number. Start `sshd`. Default action on a compute node.
+* `python tunnel.py proxy` - Run `ssh -W $hostname:$port $login_node`, retrieving the variables from the login node. Default action on a workstation that is not the login node or a compute node.
+* `python tunnel.py kill_job` - Terminate the job.
+
 # Usage and testing
 
 Executing `ssh hpcx` should be sufficient to test if the command can establish a connection to the compute node. VSCode parses the SSH config file and should present an option to connect to `hpcx`.

@@ -9,11 +9,13 @@ import time
 # https://gist.github.com/haakon-e/e444972b99a5cd885ef6b29c86cb388e
 
 # Configuration
-LOGIN_NODE = "login1.int.janelia.org"
-JOB_ID_ENV_VAR = "LSB_JOBID"
-JOB_NAME = "tunnel"
-PROJECT_NAME = "scicompsoft"
 NUM_SLOTS = "1"
+JOB_TIME="8:00"
+JOB_QUEUE="local"
+PROJECT_NAME = "scicompsoft"
+LOGIN_NODE = "login1.int.janelia.org"
+JOB_NAME = "tunnel"
+JOB_ID_ENV_VAR = "LSB_JOBID"
 
 def get_available_port():
     """
@@ -96,7 +98,13 @@ def queue_job():
         print(f"Job with name \"{JOB_NAME}\" is already running")
     else:
         print("Queuing bsub job for tunnel")
-        command = ["bsub", "-n", NUM_SLOTS, "-P", PROJECT_NAME, "-J", JOB_NAME, "python", __file__]
+        command = ["bsub",
+                   "-n", NUM_SLOTS,
+                   "-P", PROJECT_NAME,
+                   "-J", JOB_NAME,
+                   "-q", JOB_QUEUE,
+                   "-W", JOB_TIME,
+                   "python", __file__]
         subprocess.run(command)
 
 def do_proxy():

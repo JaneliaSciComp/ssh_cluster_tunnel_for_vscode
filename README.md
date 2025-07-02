@@ -28,9 +28,6 @@ The script is meant to be used via the OpenSSH's [`ProxyCommand`](https://man.op
 Currently, the script requires manual configuration of SSH, typically via `~/.ssh/config` where `~` indicate the user's home folder.
 
 ```
-Host hpc
-    HostName fqdn.to.login.node
-
 Host hpcx
     ProxyCommand python /path/to/tunnel.py proxy
 ```
@@ -100,7 +97,7 @@ tunnel.start_job()
 # Return "hostname:port" as a string
 tunnel.get_compute_node_and_port()
 
-# Forward stdin and stdout to the compute node by running `ssh -W hostname:port hpc`
+# Forward stdin and stdout to the compute node by running `ssh -W hostname:port hpc_login_node`
 tunnel.do_proxy() # Should report the SSH version. Press Ctrl-D to terminate.
 ```
 

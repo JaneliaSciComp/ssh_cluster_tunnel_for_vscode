@@ -8,6 +8,15 @@ import time
 # Based on slurm version at Caltech:
 # https://gist.github.com/haakon-e/e444972b99a5cd885ef6b29c86cb388e
 
+# Configuration
+NUM_SLOTS = "1"
+JOB_TIME="8:00"
+JOB_QUEUE="local"
+PROJECT_NAME = "scicompsoft"
+LOGIN_NODE = "login1.int.janelia.org"
+JOB_NAME = "tunnel"
+JOB_ID_ENV_VAR = "LSB_JOBID"
+
 def get_available_port():
     """
     Find an available TCP port
@@ -22,7 +31,7 @@ def get_jobid():
     """
     Get the LSF JOBID
     """
-    jobid = os.environ.get("LSB_JOBID", None)
+    jobid = os.environ.get(JOB_ID_ENV_VAR, None)
     return jobid
 
 def list_jobs_as_dict():
@@ -42,7 +51,7 @@ def is_login_node():
     """
     Check if this is the login node
     """
-    return socket.getfqdn() == socket.getfqdn("login1")
+    return socket.getfqdn() == socket.getfqdn(LOGIN_NODE)
 
 def get_compute_node_and_port():
     """
@@ -54,15 +63,15 @@ def get_compute_node_and_port():
             "bjobs",
             "-noheader",
             "-J",
-            "tunnel",
+            JOB_NAME,
             "-o",
             "exec_host description delimiter=\":\""
         ]
     else:
         command = [
             "ssh",
-            "login1",
-            "bjobs -noheader -J tunnel -o 'exec_host description delimiter=\":\"'"
+            LOGIN_NODE,
+            f"bjobs -noheader -J {JOB_NAME} -o 'exec_host description delimiter=\":\"'"
         ]
     # input must be provided so that this ssh instance does not read stdin
     s = subprocess.run(command, input="", check=True, capture_output=True, text=True)
@@ -75,9 +84,9 @@ def get_compute_node_and_port():
     return output
 
 def start_job():
-    copy_command = ["scp", __file__, "login1:~/tunnel.py"]
+    copy_command = ["scp", __file__, f"{LOGIN_NODE}:~/tunnel.py"]
     subprocess.run(copy_command, input="")
-    queue_command = ["ssh", "login1", "~/tunnel.py"]
+    queue_command = ["ssh", LOGIN_NODE, "~/tunnel.py"]
     subprocess.run(queue_command, input="")
 
 def queue_job():
@@ -86,10 +95,16 @@ def queue_job():
     This should run on the login node.
     """
     if get_compute_node_and_port():
-        print("Job with name \"tunnel\" is already running")
+        print(f"Job with name \"{JOB_NAME}\" is already running")
     else:
         print("Queuing bsub job for tunnel")
-        command = ["bsub", "-n", "1", "-P", "scicompsoft", "-J", "tunnel", "python", __file__]
+        command = ["bsub",
+                   "-n", NUM_SLOTS,
+                   "-P", PROJECT_NAME,
+                   "-J", JOB_NAME,
+                   "-q", JOB_QUEUE,
+                   "-W", JOB_TIME,
+                   "python", __file__]
         subprocess.run(command)
 
 def do_proxy():
@@ -103,7 +118,7 @@ def do_proxy():
         while not target:
             time.sleep(1)
             target = get_compute_node_and_port()
-    command = ["ssh", "-W", target, "hpc"]
+    command = ["ssh", "-W", target, LOGIN_NODE]
     subprocess.run(command)
 
 def run_job(jobid=get_jobid()):
@@ -123,22 +138,27 @@ def run_job(jobid=get_jobid()):
 
 def kill_job():
     if is_login_node():
-        command = ["bkill", "-J", "tunnel"]
+        command = ["bkill", "-J", JOB_NAME]
     else:
-        command = ["ssh", "login1", "bkill -J tunnel"]
+        command = ["ssh", LOGIN_NODE, f"bkill -J {JOB_NAME}"]
     subprocess.run(command)
 
 def main():
     action = None
+
     if len(sys.argv) > 1:
         action = sys.argv[1]
     elif is_login_node():
+        # Default action on the login node is to queue the job
         action = "queue_job"
     elif jobid := get_jobid():
+        # Default action on a compute node is to run sshd
         action = "run_job"
     else:
+        # Otherwise default action is to establish the SSH tunnel via ssh -W
         action = "proxy"
 
+    # Map action to function
     if action == "start_job":
         start_job()
     elif action == "queue_job":

@@ -50,16 +50,49 @@ It is recommend to use a SSH key. Github has [detailed instructions](https://doc
 
 1. Clone the repository in order to download the script.
 ```
-git clone https://github.com/JaneliaSciComp/ssh_cluster_tunnel_for_vscode/
+git clone https://github.com/JaneliaSciComp/ssh_cluster_tunnel_for_vscode/ -d tunnel
 ```
 
 2. Configure `~/.ssh/config` as detailed above.
 
 3.(Optional) Ensure that SSH keys are added to the `authorized_keys` file, typically `~/.ssh/authorized_keys`
 
+4. Ensure that `python` is installed. We recommend installing `python` from conda-forge via `pixi`.
+
 # Usage and testing
 
 Executing `ssh hpcx` should be sufficient to test if the command can establish a connection to the compute node. VSCode parses the SSH config file and should present an option to connect to `hpcx`.
+
+If you continue to have problems with the script, check if the following SSH configuration worksreplacing the `$host`, `$port`, and `$login_node` variables with the known values for the compute node, `sshd` port, and hostname for the login node, respectively.
+
+If the compute nodes can be directly accessed without going through the login node, `$login_node` can be any server running sshd that you have access to, including `localhost`.
+
+```
+Host hpcx
+    ProxyCommand ssh -W $host:$port $login_node
+```
+
+You may also try this on the command line, replacing the variables as described above.
+```
+$ ssh -o "ProxyCommand ssh -W $host:$port $login_node" hpcx
+```
+
+If setting `ProxyCommand` to `ssh -W ...` succeeds, then the problem is in the Python's script ability to retrieve the `$host` and `$port` information.
+
+To examine the functionality of individual functions, the key steps of the Python script can be tested as follows.
+
+```python
+import tunnel
+
+# Logs in to the login node, copies the script there, and queues a job
+tunnel.start_job()
+
+# Return "hostname:port" as a string
+tunnel.get_compute_node_and_port()
+
+# Forward stdin and stdout to the compute node by running `ssh -W hostname:port hpc`
+tunnel.do_proxy() # Should report the SSH version. Press Ctrl-D to terminate.
+```
 
 # Microsoft Windows
 
@@ -69,6 +102,26 @@ It is also recommended to [enable and use the `ssh-agent` service](https://learn
 
 Currently, there is a known issue with Python's `capture_output` keyword to `subprocess.run` causes the script to hang.
 
+# LSF details
+
+The Python script uses the following commands with regard to IBM's LSF scheduler.
+
+1. Retrieve the job description.
+
+```
+bjobs -noheader -J tunnel -o 'exec_host description delimiter=":"'
+```
+
+The expected output should resemble `e10u22:25561`.
+
+2. Set the job description to the port number
+
+```
+bmod -Jd $port $jobid
+```
+
+3. The job id is stored in an environment variable called `LSB_JOBID`.
+
 # Inspiration
 
 This Python script is inspired by a script by Haakon Ludvig Langeland Ervik at Caltech:
@@ -76,4 +129,4 @@ https://gist.github.com/haakon-e/e444972b99a5cd885ef6b29c86cb388e
 
 # License
 
-[3-Clause Open BSD](LICENSE.txt)
+[BSD 3-Clause](LICENSE.txt)

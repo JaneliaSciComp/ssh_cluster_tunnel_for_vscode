@@ -28,9 +28,6 @@ The script is meant to be used via the OpenSSH's [`ProxyCommand`](https://man.op
 Currently, the script requires manual configuration of SSH, typically via `~/.ssh/config` where `~` indicate the user's home folder.
 
 ```
-Host hpc
-    HostName fqdn.to.login.node
-
 Host hpcx
     ProxyCommand python /path/to/tunnel.py proxy
 ```
@@ -50,7 +47,7 @@ It is recommend to use a SSH key. Github has [detailed instructions](https://doc
 
 1. Clone the repository in order to download the script.
 ```
-git clone https://github.com/JaneliaSciComp/ssh_cluster_tunnel_for_vscode/ -d tunnel
+git clone https://github.com/JaneliaSciComp/ssh_cluster_tunnel_for_vscode/
 ```
 
 2. Configure `~/.ssh/config` as detailed above.
@@ -63,15 +60,29 @@ git clone https://github.com/JaneliaSciComp/ssh_cluster_tunnel_for_vscode/ -d tu
 
 The script can be invoked with no argument or a single argument. The default action when no argument is provided depends on the host.
 
-* `python tunnel.py start_job` - Copy the script to `~/tunnel.py` on the login node. Queue the job.
-* `python tunnel.py queue_job` - Queue the job from the login node. Default action on the login node.
-* `python tunnel.py run_job` - Get a free TCP port. Change the job description to the port number. Start `sshd`. Default action on a compute node.
-* `python tunnel.py proxy` - Run `ssh -W $hostname:$port $login_node`, retrieving the variables from the login node. Default action on a workstation that is not the login node or a compute node.
-* `python tunnel.py kill_job` - Terminate the job.
+* `python -m cluster_tunnel start_job` - Copy the script to `~/tunnel.py` on the login node. Queue the job.
+* `python -m cluster_tunnel queue_job` - Queue the job from the login node. Default action on the login node.
+* `python -m cluster_tunnel run_job` - Get a free TCP port. Change the job description to the port number. Start `sshd`. Default action on a compute node.
+* `python -m cluster_tunnel proxy` - Run `ssh -W $hostname:$port $login_node`, retrieving the variables from the login node. Default action on a workstation that is not the login node or a compute node.
+* `python -m cluster_tunnel kill_job` - Terminate the job.
 
-# Usage and testing
+# Pixi tasks
+
+* `pixi run tunnel [action]` can be used to run the script where action is one of `start_job`, `queue_job`, `run_job`, or `kill_job`
+* `pixi run ssh` creates a ssh session to the compute node
+* `pixi run test` runs pytest
+
+# Testing and Debugging
+
+Tests can be invoked by running `pytest`. The pixi task `pixi run test` can be used to automate the installation and invocation of `pytest`.
 
 Executing `ssh hpcx` should be sufficient to test if the command can establish a connection to the compute node. VSCode parses the SSH config file and should present an option to connect to `hpcx`.
+
+Without modify the SSH config, the script can be used as a ssh proxy via the command line:
+
+```
+ssh -o "ProxyCommand python -m cluster_tunnel proxy" hpcx
+```
 
 If you continue to have problems with the script, check if the following SSH configuration worksreplacing the `$host`, `$port`, and `$login_node` variables with the known values for the compute node, `sshd` port, and hostname for the login node, respectively.
 
@@ -92,16 +103,16 @@ If setting `ProxyCommand` to `ssh -W ...` succeeds, then the problem is in the P
 To examine the functionality of individual functions, the key steps of the Python script can be tested as follows.
 
 ```python
-import tunnel
+import cluster_tunnel
 
 # Logs in to the login node, copies the script there, and queues a job
-tunnel.start_job()
+cluster_tunnel.start_job()
 
 # Return "hostname:port" as a string
-tunnel.get_compute_node_and_port()
+cluster_tunnel.get_compute_node_and_port()
 
-# Forward stdin and stdout to the compute node by running `ssh -W hostname:port hpc`
-tunnel.do_proxy() # Should report the SSH version. Press Ctrl-D to terminate.
+# Forward stdin and stdout to the compute node by running `ssh -W hostname:port hpc_login_node`
+cluster_tunnel.do_proxy() # Should report the SSH version. Press Ctrl-D to terminate.
 ```
 
 # Microsoft Windows

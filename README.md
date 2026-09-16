@@ -52,9 +52,60 @@ git clone https://github.com/JaneliaSciComp/ssh_cluster_tunnel_for_vscode/
 
 2. Configure `~/.ssh/config` as detailed above.
 
-3.(Optional) Ensure that SSH keys are added to the `authorized_keys` file, typically `~/.ssh/authorized_keys`
+3. Add your SSH public key to `~/.ssh/authorized_keys` on the cluster. The `sshd` started on the compute node authenticates against this file.
+
+   The script connects to the login node by its full hostname (`login1.int.janelia.org` by default), so your `User` and `IdentityFile` settings must apply to that name, not just to an alias:
+
+   ```
+   Host janelia login1.int.janelia.org
+       HostName login1.int.janelia.org
+       User your_username
+       IdentityFile ~/.ssh/your_key
+   ```
 
 4. Ensure that `python` is installed. We recommend installing `python` from conda-forge via `pixi`.
+
+The sshd host key (`~/.ssh/tunnel_key` on the cluster) is generated automatically on first run.
+
+## Configuration
+
+Each setting has a default at the top of `cluster_tunnel/tunnel.py` and can be overridden with an environment variable.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CLUSTER_TUNNEL_PROJECT` | from `lsfgroup` | LSF project to bill (`bsub -P`) |
+| `CLUSTER_TUNNEL_NUM_SLOTS` | `1` | Slots to request (`bsub -n`) |
+| `CLUSTER_TUNNEL_JOB_TIME` | `8:00` | Wall time (`bsub -W`) |
+| `CLUSTER_TUNNEL_JOB_QUEUE` | `local` | Queue (`bsub -q`) |
+| `CLUSTER_TUNNEL_LOGIN_NODE` | `login1.int.janelia.org` | Login node |
+| `CLUSTER_TUNNEL_JOB_NAME` | `tunnel` | LSF job name |
+| `CLUSTER_TUNNEL_HOST_KEY` | `~/.ssh/tunnel_key` | sshd host key path |
+| `CLUSTER_TUNNEL_IDLE_TIMEOUT` | `900` | Seconds idle before the job exits. `0` disables. |
+| `CLUSTER_TUNNEL_IDLE_CHECK` | `60` | Seconds between idle checks |
+| `CLUSTER_TUNNEL_KEEPALIVE_FILE` | `~/.tunnel-keepalive` | If this file exists, the job never exits on idle |
+
+The variables are forwarded to the login node when the job is queued, since the job is submitted from there and ssh does not pass the environment through.
+
+If `CLUSTER_TUNNEL_PROJECT` is unset, the project is taken from `lsfgroup $USER`. If that command is unavailable, `-P` is omitted. Some Janelia groups, including `scicompsoft`, are rejected by esub unless `-P` is given.
+
+## Idle shutdown
+
+`sshd -D` runs until the job's wall clock expires, whether or not anyone is connected. Closing VS Code does not end the job.
+
+The job exits when no client is connected to its port and nothing is running in the session. Reconnecting queues a new job. vscode-server, extensions and credentials are stored in `$HOME`, which all compute nodes mount, so nothing is lost.
+
+The running check walks the process tree under sshd. The following are treated as idle:
+
+- `sshd`, `sshd-session` and `sshd-auth` (OpenSSH 9.8 and later use separate process names for connections)
+- processes whose command line contains `.vscode-server` or `.vscode-remote`
+- `sleep` (vscode-server runs a `sleep 180` keep-alive loop)
+- shells with no child processes
+
+Anything else, such as a running script, `tail -f`, or a notebook kernel, keeps the job alive. Note that a `sleep` in your own terminal will not.
+
+If the connection check cannot run (for example `ss` is missing), the session is assumed to be in use and the job stays up.
+
+`touch ~/.tunnel-keepalive` prevents the job from exiting. `CLUSTER_TUNNEL_IDLE_TIMEOUT=0` disables the feature.
 
 # Command line usage
 

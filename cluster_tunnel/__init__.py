@@ -2,3 +2,8 @@ from .tunnel import get_compute_node_and_port
 from .tunnel import start_job
 from .tunnel import kill_job
 from .tunnel import do_proxy
+from .tunnel import ensure_host_key
+from .tunnel import get_project_name
+from .tunnel import wait_for_compute_node_and_port
+from .tunnel import remote_command
+from .tunnel import tunnel_job_exists

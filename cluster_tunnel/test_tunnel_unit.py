@@ -277,6 +277,113 @@ def test_watchdog_disabled_by_zero_timeout(monkeypatch):
     assert not proc.terminated
 
 
+def _recorder(result):
+    calls = []
+
+    def run(command, *args, **kwargs):
+        calls.append(command)
+        return result
+
+    return calls, run
+
+
+def test_remote_bjobs_query_quotes_the_job_name(monkeypatch):
+    # JOB_NAME comes from the environment and is interpolated into a remote
+    # shell string, so it must be quoted or it can run extra commands.
+    monkeypatch.setattr(tunnel, "JOB_NAME", "x; touch /tmp/pwned")
+    monkeypatch.setattr(tunnel, "is_login_node", lambda: False)
+    calls, run = _recorder(_Completed(stdout=""))
+    monkeypatch.setattr(tunnel.subprocess, "run", run)
+    tunnel.get_compute_node_and_port()
+    remote = calls[0][2]
+    assert "'x; touch /tmp/pwned'" in remote
+    assert "; touch" not in remote.replace("'x; touch /tmp/pwned'", "")
+
+
+def test_tunnel_job_exists_quotes_the_job_name(monkeypatch):
+    monkeypatch.setattr(tunnel, "JOB_NAME", "x; touch /tmp/pwned")
+    monkeypatch.setattr(tunnel, "is_login_node", lambda: False)
+    calls, run = _recorder(_Completed(stdout=""))
+    monkeypatch.setattr(tunnel.subprocess, "run", run)
+    tunnel.tunnel_job_exists()
+    assert "'x; touch /tmp/pwned'" in calls[0][2]
+
+
+def test_kill_job_quotes_the_job_name(monkeypatch):
+    monkeypatch.setattr(tunnel, "JOB_NAME", "x; touch /tmp/pwned")
+    monkeypatch.setattr(tunnel, "is_login_node", lambda: False)
+    calls, run = _recorder(_Completed())
+    monkeypatch.setattr(tunnel.subprocess, "run", run)
+    tunnel.kill_job()
+    assert "'x; touch /tmp/pwned'" in calls[0][2]
+
+
+def test_tunnel_job_exists_fails_closed_when_bjobs_errors(monkeypatch):
+    # A failed query must not be read as "no job", or the caller submits a
+    # duplicate.
+    monkeypatch.setattr(tunnel, "is_login_node", lambda: True)
+    monkeypatch.setattr(
+        tunnel.subprocess, "run",
+        lambda *a, **k: _Completed(stdout="", stderr="lsf down", returncode=255),
+    )
+    with pytest.raises(RuntimeError):
+        tunnel.tunnel_job_exists()
+
+
+def test_process_table_returns_none_when_ps_cannot_run(monkeypatch):
+    monkeypatch.setattr(tunnel.subprocess, "run", _raise_oserror)
+    assert tunnel.process_table() is None
+
+
+def test_process_table_returns_none_when_ps_fails(monkeypatch):
+    monkeypatch.setattr(
+        tunnel.subprocess, "run",
+        lambda *a, **k: _Completed(stdout="", stderr="boom", returncode=1),
+    )
+    assert tunnel.process_table() is None
+
+
+def test_unreadable_process_table_counts_as_busy(monkeypatch):
+    # Fail safe: if we cannot see the processes, do not conclude the session
+    # is idle.
+    monkeypatch.setattr(tunnel, "process_table", lambda: None)
+    assert tunnel.busy_process(100) is not None
+
+
+def test_start_job_reports_whether_it_submitted(monkeypatch):
+    submitted = iter([
+        _Completed(),  # scp
+        _Completed(stdout="Job <1> is submitted to queue <local>."),
+        _Completed(),  # scp
+        _Completed(stderr='Job with name "tunnel" is already queued or running'),
+    ])
+    monkeypatch.setattr(tunnel.subprocess, "run", lambda *a, **k: next(submitted))
+    assert tunnel.start_job() is True
+    assert tunnel.start_job() is False
+
+
+def test_timeout_cancels_only_a_job_this_connection_submitted(monkeypatch):
+    killed = []
+    monkeypatch.setattr(tunnel, "get_compute_node_and_port", lambda: "")
+    monkeypatch.setattr(tunnel, "kill_job", lambda: killed.append(True))
+
+    def timeout():
+        raise TimeoutError("no dispatch")
+
+    monkeypatch.setattr(tunnel, "wait_for_compute_node_and_port", timeout)
+
+    monkeypatch.setattr(tunnel, "start_job", lambda: True)
+    with pytest.raises(TimeoutError):
+        tunnel.do_proxy()
+    assert killed == [True]
+
+    killed.clear()
+    monkeypatch.setattr(tunnel, "start_job", lambda: False)
+    with pytest.raises(TimeoutError):
+        tunnel.do_proxy()
+    assert killed == [], "must not cancel a job another connection is waiting on"
+
+
 class _FakeProcess:
     def __init__(self, alive_for=None):
         self.pid = 100

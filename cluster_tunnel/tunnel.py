@@ -119,7 +119,7 @@ def get_compute_node_and_port():
         command = [
             "ssh",
             LOGIN_NODE,
-            f"bjobs -noheader -J {JOB_NAME} -o 'exec_host description delimiter=\":\"'"
+            f"bjobs -noheader -J {shlex.quote(JOB_NAME)} -o 'exec_host description delimiter=\":\"'"
         ]
     # input must be provided so that this ssh instance does not read stdin
     s = subprocess.run(command, input="", check=True, capture_output=True, text=True)
@@ -141,12 +141,17 @@ def tunnel_job_exists():
     Duplicates each hold an allocation and are billed.
 
     Note bjobs exits 0 whether or not the job exists and writes "is not found"
-    to stderr, so presence has to be judged from stdout.
+    to stderr, so presence has to be judged from stdout. A non-zero exit means
+    the query itself failed, and that must not be read as "no job".
     """
     command = ["bjobs", "-noheader", "-J", JOB_NAME, "-o", "stat"]
     if not is_login_node():
-        command = ["ssh", LOGIN_NODE, " ".join(command)]
+        command = ["ssh", LOGIN_NODE, " ".join(shlex.quote(c) for c in command)]
     s = subprocess.run(command, input="", capture_output=True, text=True)
+    if s.returncode != 0:
+        raise RuntimeError(
+            f"Could not query LSF for job \"{JOB_NAME}\" (exit {s.returncode}): {s.stderr.strip()}"
+        )
     return bool(s.stdout.strip())
 
 def get_project_name():
@@ -207,38 +212,52 @@ def start_job():
             log(stream.strip())
     if s.returncode != 0:
         raise RuntimeError(f"Could not queue the tunnel job on {LOGIN_NODE} (see output above)")
+    # True only if this call submitted a new job, as opposed to finding one
+    # already queued. do_proxy uses this to decide what it may cancel.
+    return "is submitted" in s.stdout
 
 def queue_job():
     """
     Acquire a compute node and execute run_job.
     This should run on the login node.
     """
-    if tunnel_job_exists():
-        log(f"Job with name \"{JOB_NAME}\" is already queued or running")
-        return
-    log("Queuing bsub job for tunnel")
-    command = ["bsub",
-               "-n", NUM_SLOTS,
-               "-J", JOB_NAME,
-               "-q", JOB_QUEUE,
-               "-W", JOB_TIME]
-    project = get_project_name()
-    if project:
-        command += ["-P", project]
-    command += ["python", __file__]
-    s = subprocess.run(command, capture_output=True, text=True)
-    if s.stdout.strip():
-        log(s.stdout.strip())
-    # An esub rejection exits non-zero (255 at Janelia) and explains itself on
-    # stdout. Also require the submission line, so a silent no-op is not
-    # mistaken for success and left to time out in the wait loop.
-    if s.returncode != 0 or "is submitted" not in s.stdout:
-        raise RuntimeError(
-            "bsub did not queue the tunnel job.\n"
-            f"  command: {' '.join(command)}\n"
-            f"  stdout: {s.stdout.strip()}\n"
-            f"  stderr: {s.stderr.strip()}"
-        )
+    # Imported here rather than at module level so the workstation side still
+    # imports on Windows, where fcntl does not exist. queue_job only runs on
+    # the login node.
+    import fcntl
+
+    # Two ProxyCommand connections can start at the same time, and each would
+    # see no job and submit one. Serialise the check-and-submit with a lock in
+    # $HOME; the login node is a single host, so flock is sufficient.
+    lock_path = os.path.expanduser(f"~/.{JOB_NAME}.queue.lock")
+    with open(lock_path, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if tunnel_job_exists():
+            log(f"Job with name \"{JOB_NAME}\" is already queued or running")
+            return
+        log("Queuing bsub job for tunnel")
+        command = ["bsub",
+                   "-n", NUM_SLOTS,
+                   "-J", JOB_NAME,
+                   "-q", JOB_QUEUE,
+                   "-W", JOB_TIME]
+        project = get_project_name()
+        if project:
+            command += ["-P", project]
+        command += ["python", __file__]
+        s = subprocess.run(command, capture_output=True, text=True)
+        if s.stdout.strip():
+            log(s.stdout.strip())
+        # An esub rejection exits non-zero (255 at Janelia) and explains itself
+        # on stdout. Also require the submission line, so a silent no-op is not
+        # mistaken for success and left to time out in the wait loop.
+        if s.returncode != 0 or "is submitted" not in s.stdout:
+            raise RuntimeError(
+                "bsub did not queue the tunnel job.\n"
+                f"  command: {' '.join(command)}\n"
+                f"  stdout: {s.stdout.strip()}\n"
+                f"  stderr: {s.stderr.strip()}"
+            )
 
 def wait_for_compute_node_and_port(timeout=POLL_TIMEOUT_SECONDS):
     """
@@ -272,8 +291,16 @@ def do_proxy():
     """
     target = get_compute_node_and_port()
     if not target:
-        start_job()
-        target = wait_for_compute_node_and_port()
+        submitted = start_job()
+        try:
+            target = wait_for_compute_node_and_port()
+        except TimeoutError:
+            # Only cancel a job this connection created. If another connection
+            # queued it, that one is still waiting on it.
+            if submitted:
+                log(f"Cancelling job \"{JOB_NAME}\" queued by this connection")
+                kill_job()
+            raise
     command = ["ssh", "-W", target, LOGIN_NODE]
     subprocess.run(command)
 
@@ -299,11 +326,22 @@ def ensure_host_key(path=None):
     return path
 
 def process_table():
-    """Every process on this host as (pid, ppid, comm, args) tuples."""
-    s = subprocess.run(
-        ["ps", "-eo", "pid,ppid,comm,args", "--no-headers"],
-        capture_output=True, text=True,
-    )
+    """
+    Every process on this host as (pid, ppid, comm, args) tuples, or None if
+    the table could not be read. None must be treated as "unknown", never as
+    "nothing running", or a failed ps would get an active session killed.
+    """
+    try:
+        s = subprocess.run(
+            ["ps", "-eo", "pid,ppid,comm,args", "--no-headers"],
+            capture_output=True, text=True,
+        )
+    except OSError as e:
+        log(f"Could not run ps: {e}")
+        return None
+    if s.returncode != 0:
+        log(f"ps exited {s.returncode}: {s.stderr.strip()}")
+        return None
     table = []
     for line in s.stdout.splitlines():
         fields = line.split(None, 3)
@@ -326,7 +364,10 @@ def busy_process(sshd_pid, table=None):
     *running* something has children and is therefore not idle, which is what
     distinguishes `tail -f` or a training script from an open terminal.
     """
-    table = process_table() if table is None else table
+    if table is None:
+        table = process_table()
+    if table is None:
+        return "process table unavailable, assuming the session is in use"
     info = {pid: (comm, args) for pid, _, comm, args in table}
     children = {}
     for pid, ppid, _, _ in table:
@@ -445,7 +486,7 @@ def kill_job():
     if is_login_node():
         command = ["bkill", "-J", JOB_NAME]
     else:
-        command = ["ssh", LOGIN_NODE, f"bkill -J {JOB_NAME}"]
+        command = ["ssh", LOGIN_NODE, f"bkill -J {shlex.quote(JOB_NAME)}"]
     subprocess.run(command)
 
 def main():
